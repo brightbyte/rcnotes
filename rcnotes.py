@@ -8,8 +8,8 @@ import sys
 
 wikiApiUrl = 'https://www.wikidata.org/w/api.php'
 
-if len(sys.argv) != 2:
-    print "Usage: {0} <file>".format( sys.argv[0] )
+if len(sys.argv) != 3:
+    print "Usage: {0} <output-dir>".format( sys.argv[0] )
     sys.exit(2)
     
 def fetchRecentChanges( title, **params ):
@@ -84,7 +84,7 @@ def addDeltas( revisions ):
 
 def makeTrack( midiFile, rc ):
 	# Instantiate a MIDI Pattern (contains a list of tracks)
-	pattern = midi.Pattern()
+	pattern = midi.Pattern( resolution=256 )
 	# Instantiate a MIDI Track (contains a list of MIDI events)
 	track = midi.Track()
 	# Append the track to the pattern
@@ -93,7 +93,7 @@ def makeTrack( midiFile, rc ):
 	# Instantiate a MIDI note on event, append it to the track
 	for row in rc:
 		args = { 
-			'tick': row['delta-timestamp-log'] * 10,
+			'tick': row['delta-timestamp-log'] * 16 + 16,
 			'pitch': midi.G_3,
 			'velocity': min( 255, abs( row['delta-size-log'] ) * 16 )
 		}
@@ -112,12 +112,28 @@ def makeTrack( midiFile, rc ):
 	
 def writeCsv( filename, rc ):
 	f = open( filename, 'wb')
+	
+	fields = (
+		'revid',
+		'timestamp', 
+		'delta-size',
+		'delta-size-log',
+		'delta-timestamp',
+		'delta-timestamp-log',
+		'user',
+		'userid',
+		'comment',
+	)
+
+	s = u"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % fields
+	f.write( s.encode('utf8') )
+	
 	for row in rc:
 		fields = ( row['revid'],
 			row['timestamp'], 
 			row['delta-size'],
-			row['delta-timestamp'],
 			row['delta-size-log'],
+			row['delta-timestamp'],
 			row['delta-timestamp-log'],
 			row['user'],
 			row['userid'],
@@ -129,14 +145,14 @@ def writeCsv( filename, rc ):
 		
 	f.close()
 	
-	
-rc = fetchRecentChanges( 'Q154556' )
+qid = sys.argv[1]
+rc = fetchRecentChanges( qid )
 rc = addDeltas( rc )
 
-csvfile = sys.argv[1] + ".csv"
+csvfile = sys.argv[2] + "/" + qid + ".csv"
 writeCsv( csvfile, rc )
 print csvfile
 
-midifile = sys.argv[1] + ".mid"
+midifile = sys.argv[2] + "/" + qid + ".mid"
 makeTrack( midifile, rc )
 print csvfile
