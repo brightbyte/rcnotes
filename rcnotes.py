@@ -9,7 +9,7 @@ import sys
 wikiApiUrl = 'https://www.wikidata.org/w/api.php'
 
 if len(sys.argv) != 2:
-    print "Usage: {0} <midifile>".format( sys.argv[0] )
+    print "Usage: {0} <file>".format( sys.argv[0] )
     sys.exit(2)
     
 def fetchRecentChanges( title, **params ):
@@ -18,10 +18,10 @@ def fetchRecentChanges( title, **params ):
 	params['titles'] = title
 	
 	if not 'rvlimit' in params:
-		params['rvlimit'] = 100
+		params['rvlimit'] = 500
 
 	if not 'rvprop' in params:
-		params['rvprop'] = 'ids|timestamp|userid|flags|tages|size|comment'
+		params['rvprop'] = 'ids|timestamp|user|userid|flags|tages|size|comment'
 
 	params['action'] = 'query'
 	params['prop'] = 'revisions'
@@ -53,6 +53,13 @@ def isoTimeDelta( aTime, bTime ):
 	delta = a - b
 	return int( delta.total_seconds() )
 
+def logish( n ):
+	if n < 1: 
+		return 0
+	else:
+		return int( round( math.log( n ) ) )
+
+
 def addDeltas( revisions ):
 	revisionsWithDeltas = []
 	prev = None
@@ -63,12 +70,12 @@ def addDeltas( revisions ):
 			newRow['delta-timestamp'] = 0
 			newRow['delta-timestamp-log'] = 0
 			newRow['delta-size'] = rev['size']
-			newRow['delta-size-log'] = int( round( math.log( newRow['delta-size'] ) ) )
+			newRow['delta-size-log'] = logish( newRow['delta-size'] )
 		else:
 			newRow['delta-timestamp'] = isoTimeDelta( rev['timestamp'], prev['timestamp'] )
-			newRow['delta-timestamp-log'] = int( round( math.log( newRow['delta-timestamp'] ) ) )
+			newRow['delta-timestamp-log'] = logish( newRow['delta-timestamp'] )
 			newRow['delta-size'] = rev['size'] - prev['size']
-			newRow['delta-size-log'] = int( round( math.log( newRow['delta-size'] ) ) )
+			newRow['delta-size-log'] = logish( newRow['delta-size'] )
 			
 		prev = rev
 		revisionsWithDeltas.append( newRow )
@@ -88,7 +95,7 @@ def makeTrack( midiFile, rc ):
 		args = { 
 			'tick': row['delta-timestamp-log'] * 10,
 			'pitch': midi.G_3,
-			'velocity': min( 255, row['delta-size-log'] * 16 )
+			'velocity': min( 255, abs( row['delta-size-log'] ) * 16 )
 		}
 		
 		print args
@@ -103,10 +110,33 @@ def makeTrack( midiFile, rc ):
 	# Save the pattern to disk
 	midi.write_midifile( midiFile, pattern )
 	
-rc = fetchRecentChanges( 'Q154556', rvstart = '2015-01-01T00:00:00Z' )
-rc = addDeltas( rc )
-# for row in rc:
-# 	print row['revid'], row['timestamp'], '//', row['delta-size'], row['delta-timestamp'], '//', row['delta-size-log'], row['delta-timestamp-log']
+def writeCsv( filename, rc ):
+	f = open( filename, 'wb')
+	for row in rc:
+		fields = ( row['revid'],
+			row['timestamp'], 
+			row['delta-size'],
+			row['delta-timestamp'],
+			row['delta-size-log'],
+			row['delta-timestamp-log'],
+			row['user'],
+			row['userid'],
+			row['comment'],
+		)
 
-midifile = sys.argv[1]
+		s = u"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % fields
+		f.write( s.encode('utf8') )
+		
+	f.close()
+	
+	
+rc = fetchRecentChanges( 'Q154556' )
+rc = addDeltas( rc )
+
+csvfile = sys.argv[1] + ".csv"
+writeCsv( csvfile, rc )
+print csvfile
+
+midifile = sys.argv[1] + ".mid"
 makeTrack( midifile, rc )
+print csvfile
