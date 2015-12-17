@@ -1,139 +1,112 @@
-from midi import *
+import midi
+import urllib
+import urllib2
+import json
+import math
+import datetime
 import sys
 
+wikiApiUrl = 'https://www.wikidata.org/w/api.php'
+
 if len(sys.argv) != 2:
-    print "Usage: {0} <midifile>".format(sys.argv[0])
+    print "Usage: {0} <midifile>".format( sys.argv[0] )
     sys.exit(2)
     
-class TrackBuilder:
-	bottom = 0
-	tick = 0
-	pending = []
+def fetchRecentChanges( title, **params ):
+	url = wikiApiUrl
+	
+	params['titles'] = title
+	
+	if not 'rvlimit' in params:
+		params['rvlimit'] = 100
 
-	def __init__( self, duration = 60, velocity = 70, channel = 0 ):
-		self.duration = duration
-		self.velocity = velocity
-		self.channel = channel
+	if not 'rvprop' in params:
+		params['rvprop'] = 'ids|timestamp|userid|flags|tages|size|comment'
+
+	params['action'] = 'query'
+	params['prop'] = 'revisions'
+	params['rvdir'] = 'newer'
+	params['format'] = 'json'
+	
+	url = url + '?' + urllib.urlencode( params )
+	
+	print url
+	response = urllib2.urlopen( url )
+	if response.getcode() >= 400:
+		raise Exception( 'HTTP error: ' + response.getcode() + "\nFrom: " + response.geturl() )
+	
+	if response.info().getsubtype() != 'json':
+		raise Exception( 'Not JSON: ' + response.info().gettype() + "\nFrom: " + response.geturl() )
+	
+	jsonString = response.read()
+	apiResponse = json.loads( jsonString )
+	
+	for id, pageData in apiResponse['query']['pages'].items():
+		break #all we need is the first value in pageData
+	
+	return pageData['revisions']
+
+def isoTimeDelta( aTime, bTime ):
+	a = datetime.datetime.strptime( aTime, "%Y-%m-%dT%H:%M:%SZ" )
+	b = datetime.datetime.strptime( bTime, "%Y-%m-%dT%H:%M:%SZ" )
+	
+	delta = a - b
+	return int( delta.total_seconds() )
+
+def addDeltas( revisions ):
+	revisionsWithDeltas = []
+	prev = None
+	for rev in revisions:
+		newRow = rev
 		
-		self.track = Track()
-		
-	def _defaults( self, kw ):
-		if not 'tick' in kw:
-			kw['tick'] = self.tick
+		if prev is None:
+			newRow['delta-timestamp'] = 0
+			newRow['delta-timestamp-log'] = 0
+			newRow['delta-size'] = rev['size']
+			newRow['delta-size-log'] = int( round( math.log( newRow['delta-size'] ) ) )
+		else:
+			newRow['delta-timestamp'] = isoTimeDelta( rev['timestamp'], prev['timestamp'] )
+			newRow['delta-timestamp-log'] = int( round( math.log( newRow['delta-timestamp'] ) ) )
+			newRow['delta-size'] = rev['size'] - prev['size']
+			newRow['delta-size-log'] = int( round( math.log( newRow['delta-size'] ) ) )
 			
-		if not 'channel' in kw:
-			kw['channel'] = self.channel
+		prev = rev
+		revisionsWithDeltas.append( newRow )
 		
-	def note( self, pitch, **kw ):
-		kw['pitch'] = pitch
-		if not 'duration' in kw:
-			kw['duration'] = self.duration
+	return revisionsWithDeltas
 
-		if not 'velocity' in kw:
-			kw['velocity'] = self.velocity
-			
-		self._defaults(kw)
-		
-		self.flush( kw['tick'] )
-		self._commit( NoteOnEvent( **kw ) )
-		
-		kw['tick'] = kw['tick'] + kw['duration']
-		self._queue( NoteOffEvent( **kw ) )
-		
-		return self.tick
-	
-	def control( self, value, **kw ):
-		kw['value'] = value
-		self._defaults(kw)
-
-		self.flush( kw['tick'] )
-		self._commit( ControlChangeEvent( **kw ) )
-	
-	def program( self, value, **kw ):
-		kw['value'] = value
-		self._defaults(kw)
-
-		self.flush( kw['tick'] )
-		self._commit( ProgramChangeEvent( **kw ) )
-		
-	def _commit( self, event ):
-		if ( event.tick < self.bottom ):
-			raise Exception( "Cannot commit past events! %i < %i" % ( event.tick, self.bottom ) )
-		
-		self.track.append( event )
-		self.bottom = event.tick
-		self.tick = max( self.tick, self.bottom )
-
-	def _queue( self, event ):
-		if ( event.tick < self.bottom ):
-			raise Exception( "Cannot queue past events! %i < %i" % ( event.tick, self.bottom ) )
-		
-		self.pending.append( event )
-		self.tick = max( self.tick, event.tick )
-		
-	def flush( self, upto = None ):
-		queue = sorted( self.pending, key = lambda event: event.tick )
-		self.pending = []
-		
-		for event in queue:
-			if upto is None or event.tick < upto:
-				self._commit( event )
-			else:
-				self._queue( event )
-	
-	def seek( self, tick ):
-		if ( tick < self.bottom ):
-			raise Exception( "Cannot seek back past played notes! %i < %i" % ( event.tick, self.bottom ) )
-		
-		self.tick = tick
-	
-	def shift( self, ticks ):
-		self.seek( self.tick + ticks )
-	
-	def pause( self, notes ):
-		self.shift( notes * self.duration )
-		
-	def close( self ):
-		self.flush()
-		self.track.append( EndOfTrackEvent( tick = self.tick ) )
-		
-		track = self.track
-		self.track = None
-		return track
-
-class ChordBuilder:
-	def __init__( self, trackBuilder ):
-		self.tick = trackBuilder.tick
-		self.trackBuilder = trackBuilder
-		
-	def note( self, **kw ):
-		if not 'tick' in kw:
-			kw['tick'] = self.tick
-		
-		self.trackBuilder( **kw )
-    
-def makeTrack():
-	builder = TrackBuilder()
-	
-	for p in range(0,12):
-		builder.program( p )
-		builder.note( C_4 )
-		builder.flush()
-
-	return builder.close()
-	
-def makeMidiFile( midifile ):
+def makeTrack( midiFile, rc ):
 	# Instantiate a MIDI Pattern (contains a list of tracks)
-	pattern = Pattern( format = 1, resolution= 220, tick_relative=False )
-
-	track = makeTrack()
+	pattern = midi.Pattern()
+	# Instantiate a MIDI Track (contains a list of MIDI events)
+	track = midi.Track()
+	# Append the track to the pattern
 	pattern.append(track)
 
-	print pattern
+	# Instantiate a MIDI note on event, append it to the track
+	for row in rc:
+		args = { 
+			'tick': row['delta-timestamp-log'] * 10,
+			'pitch': midi.G_3,
+			'velocity': min( 255, row['delta-size-log'] * 16 )
+		}
+		
+		print args
+		track.append( midi.NoteOnEvent( **args ) )
 	
+	# Add the end of track event, append it to the track
+	eot = midi.EndOfTrackEvent(tick=1)
+	track.append(eot)
+	
+	# Print out the pattern
+	print pattern
 	# Save the pattern to disk
-	write_midifile(midifile, pattern)
+	midi.write_midifile( midiFile, pattern )
+	
+rc = fetchRecentChanges( 'Q154556', rvstart = '2015-01-01T00:00:00Z' )
+rc = addDeltas( rc )
+# for row in rc:
+# 	print row['revid'], row['timestamp'], '//', row['delta-size'], row['delta-timestamp'], '//', row['delta-size-log'], row['delta-timestamp-log']
 
-    
 midifile = sys.argv[1]
-makeMidiFile( midifile )
+makeTrack( midifile, rc )
