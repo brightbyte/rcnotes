@@ -9,7 +9,7 @@ import sys
 wikiApiUrl = 'https://www.wikidata.org/w/api.php'
 
 if len(sys.argv) != 3:
-    print "Usage: {0} <output-dir>".format( sys.argv[0] )
+    print "Usage: {0} <qid> <output-dir>".format( sys.argv[0] )
     sys.exit(2)
     
 def fetchRecentChanges( title, **params ):
