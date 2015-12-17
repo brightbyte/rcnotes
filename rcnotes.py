@@ -100,6 +100,7 @@ def makeTrack( midiFile, rc ):
 		
 		print args
 		track.append( midi.NoteOnEvent( **args ) )
+		track.append( midi.NoteOffEvent( **args ) )
 	
 	# Add the end of track event, append it to the track
 	eot = midi.EndOfTrackEvent(tick=1)
@@ -155,4 +156,4 @@ print csvfile
 
 midifile = sys.argv[2] + "/" + qid + ".mid"
 makeTrack( midifile, rc )
-print csvfile
+print midifile
