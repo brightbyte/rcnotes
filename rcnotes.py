@@ -92,9 +92,11 @@ def makeTrack( midiFile, rc ):
 
 	# Instantiate a MIDI note on event, append it to the track
 	for row in rc:
+		pitch = midi.C_3 + ( row['userid'] % 12 );
+		
 		args = { 
 			'tick': row['delta-timestamp-log'] * 16 + 16,
-			'pitch': midi.G_3,
+			'pitch': pitch,
 			'velocity': min( 255, abs( row['delta-size-log'] ) * 16 )
 		}
 		
@@ -106,8 +108,6 @@ def makeTrack( midiFile, rc ):
 	eot = midi.EndOfTrackEvent(tick=1)
 	track.append(eot)
 	
-	# Print out the pattern
-	print pattern
 	# Save the pattern to disk
 	midi.write_midifile( midiFile, pattern )
 	
