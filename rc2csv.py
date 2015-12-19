@@ -5,11 +5,12 @@ import json
 import math
 import datetime
 import sys
+import os.path
 
 wikiApiUrl = 'https://www.wikidata.org/w/api.php'
 
 if len(sys.argv) != 3:
-    print "Usage: {0} <qid> <output-dir>".format( sys.argv[0] )
+    print "Usage: {0} <title> <output-dir>".format( sys.argv[0] )
     sys.exit(2)
     
 def fetchRecentChanges( title, **params ):
@@ -30,7 +31,7 @@ def fetchRecentChanges( title, **params ):
 	
 	url = url + '?' + urllib.urlencode( params )
 	
-	print url
+	print "Fetching data from", url
 	response = urllib2.urlopen( url )
 	if response.getcode() >= 400:
 		raise Exception( 'HTTP error: ' + response.getcode() + "\nFrom: " + response.geturl() )
@@ -53,13 +54,6 @@ def isoTimeDelta( aTime, bTime ):
 	delta = a - b
 	return int( delta.total_seconds() )
 
-def logish( n ):
-	if n < 1: 
-		return 0
-	else:
-		return int( round( math.log( n ) ) )
-
-
 def addDeltas( revisions ):
 	revisionsWithDeltas = []
 	prev = None
@@ -67,49 +61,16 @@ def addDeltas( revisions ):
 		newRow = rev
 		
 		if prev is None:
-			newRow['delta-timestamp'] = 0
-			newRow['delta-timestamp-log'] = 0
+			newRow['delta-time'] = 0
 			newRow['delta-size'] = rev['size']
-			newRow['delta-size-log'] = logish( newRow['delta-size'] )
 		else:
-			newRow['delta-timestamp'] = isoTimeDelta( rev['timestamp'], prev['timestamp'] )
-			newRow['delta-timestamp-log'] = logish( newRow['delta-timestamp'] )
+			newRow['delta-time'] = isoTimeDelta( rev['timestamp'], prev['timestamp'] )
 			newRow['delta-size'] = rev['size'] - prev['size']
-			newRow['delta-size-log'] = logish( newRow['delta-size'] )
 			
 		prev = rev
 		revisionsWithDeltas.append( newRow )
 		
 	return revisionsWithDeltas
-
-def makeTrack( midiFile, rc ):
-	# Instantiate a MIDI Pattern (contains a list of tracks)
-	pattern = midi.Pattern( resolution=256 )
-	# Instantiate a MIDI Track (contains a list of MIDI events)
-	track = midi.Track()
-	# Append the track to the pattern
-	pattern.append(track)
-
-	# Instantiate a MIDI note on event, append it to the track
-	for row in rc:
-		pitch = midi.C_3 + ( row['userid'] % 12 );
-		
-		args = { 
-			'tick': row['delta-timestamp-log'] * 16 + 16,
-			'pitch': pitch,
-			'velocity': min( 255, abs( row['delta-size-log'] ) * 16 )
-		}
-		
-		print args
-		track.append( midi.NoteOnEvent( **args ) )
-		track.append( midi.NoteOffEvent( **args ) )
-	
-	# Add the end of track event, append it to the track
-	eot = midi.EndOfTrackEvent(tick=1)
-	track.append(eot)
-	
-	# Save the pattern to disk
-	midi.write_midifile( midiFile, pattern )
 	
 def writeCsv( filename, rc ):
 	f = open( filename, 'wb')
@@ -117,43 +78,41 @@ def writeCsv( filename, rc ):
 	fields = (
 		'revid',
 		'timestamp', 
+		'delta-time',
+		'size',
 		'delta-size',
-		'delta-size-log',
-		'delta-timestamp',
-		'delta-timestamp-log',
-		'user',
 		'userid',
+		'user',
 		'comment',
 	)
 
-	s = u"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % fields
+	s = u"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % fields
 	f.write( s.encode('utf8') )
 	
 	for row in rc:
 		fields = ( row['revid'],
 			row['timestamp'], 
+			row['delta-time'],
+			row['size'],
 			row['delta-size'],
-			row['delta-size-log'],
-			row['delta-timestamp'],
-			row['delta-timestamp-log'],
-			row['user'],
 			row['userid'],
-			row['comment'],
+			row['user'] if 'user' in row else "",
+			row['comment'] if 'comment' in row else "",
 		)
 
-		s = u"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % fields
+		s = u"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % fields
 		f.write( s.encode('utf8') )
 		
 	f.close()
 	
-qid = sys.argv[1]
-rc = fetchRecentChanges( qid )
+title = sys.argv[1]
+csvfile = sys.argv[2]
+
+if os.path.isdir( csvfile ):
+	csvfile = "%s/%s.csv" % ( csvfile, title )
+
+rc = fetchRecentChanges( title )
 rc = addDeltas( rc )
 
-csvfile = sys.argv[2] + "/" + qid + ".csv"
 writeCsv( csvfile, rc )
-print csvfile
-
-midifile = sys.argv[2] + "/" + qid + ".mid"
-makeTrack( midifile, rc )
-print midifile
+print "Events written to ", csvfile
